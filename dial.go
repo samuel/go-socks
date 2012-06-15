@@ -92,7 +92,9 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	buf := make([]byte, 16)
+	buf := make([]byte, 16+len(p.Username)+len(p.Password))
+
+	// Initial greeting
 
 	buf[0] = protocolVersion
 	if p.Username != "" {
@@ -111,6 +113,8 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		conn.Close()
 		return nil, err
 	}
+
+	// Server's auth choice
 
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		conn.Close()
@@ -156,6 +160,8 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
+	// Command / connection request
+
 	buf = buf[:7+len(host)]
 	buf[0] = protocolVersion
 	buf[1] = commandTcpConnect
@@ -169,6 +175,8 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		conn.Close()
 		return nil, err
 	}
+
+	// Server response
 
 	if _, err := io.ReadFull(conn, buf[:4]); err != nil {
 		conn.Close()
@@ -220,7 +228,6 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		paddr.host = string(buf[:domainLen])
 	}
 
-	// Port
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		conn.Close()
 		return nil, err
