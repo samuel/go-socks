@@ -48,7 +48,7 @@ const (
 var (
 	ErrAuthFailed             = errors.New("authentication failed")
 	ErrInvalidProxyResponse   = errors.New("invalid proxy response")
-	ErrNoAcceptableAuthMethod = errors.New("could not agree on an auth method with server")
+	ErrNoAcceptableAuthMethod = errors.New("no acceptable authentication method")
 
 	statusErrors = map[byte]error{
 		statusGeneralFailure:          errors.New("general failure"),
