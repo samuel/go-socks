@@ -92,7 +92,7 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	buf := make([]byte, 16+len(p.Username)+len(p.Password))
+	buf := make([]byte, 32+len(host)+len(p.Username)+len(p.Password))
 
 	// Initial greeting
 
