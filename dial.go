@@ -1,4 +1,4 @@
-package socks5
+package socks
 
 import (
 	"errors"
