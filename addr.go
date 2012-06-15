@@ -3,7 +3,7 @@ package socks
 import "fmt"
 
 type proxiedAddr struct {
-	net string
+	net  string
 	host string
 	port int
 }

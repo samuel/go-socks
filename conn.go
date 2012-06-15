@@ -6,8 +6,9 @@ import (
 )
 
 type proxiedConn struct {
-	conn net.Conn
-	addr *proxiedAddr
+	conn       net.Conn
+	remoteAddr *proxiedAddr
+	boundAddr  *proxiedAddr
 }
 
 func (c *proxiedConn) Read(b []byte) (int, error) {
@@ -23,11 +24,17 @@ func (c *proxiedConn) Close() error {
 }
 
 func (c *proxiedConn) LocalAddr() net.Addr {
+	if c.boundAddr != nil {
+		return c.boundAddr
+	}
 	return c.LocalAddr()
 }
 
 func (c *proxiedConn) RemoteAddr() net.Addr {
-	return c.addr
+	if c.remoteAddr != nil {
+		return c.remoteAddr
+	}
+	return c.RemoteAddr()
 }
 
 func (c *proxiedConn) SetDeadline(t time.Time) error {

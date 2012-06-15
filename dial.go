@@ -1,3 +1,12 @@
+/*
+	Current limitations:
+
+	- GSS-API authentication is not supported
+
+	- only SOCKS version 5 is supported
+
+	- TCP bind and UDP not yet supported
+*/
 package socks
 
 import (
@@ -8,36 +17,58 @@ import (
 )
 
 const (
-	PROTOCOL_VERSION = 5
+	protocolVersion = 5
 
-	COMMAND_TCP_CONNECT = 1
-	COMMAND_TCP_BIND = 2
-	COMMAND_UDP = 3
+	defaultPort = 1080
 
-	ADDRESS_TYPE_IPV4 = 1
-	ADDRESS_TYPE_DOMAIN = 3
-	ADDRESS_TYPE_IPV6 = 4
+	authNone             = 0
+	authGssApi           = 1
+	authUsernamePassword = 2
+	authUnavailable      = 0xff
 
-	STATUS_REQUEST_GRANTED = 0
-	STATUS_GENERAL_FAILURE = 1
-	STATUS_CONNECTION_NOT_ALLOWED = 2
-	STATUS_NETWORK_UNREACHABLE = 3
-	STATUS_HOST_UNREACHABLE = 4
-	STATUS_CONNECTION_REFUSED = 5
-	STATUS_TTL_EXPIRED = 6
-	STATUS_COMMAND_NOT_SUPPORT = 7
-	STATUS_ADDRESS_TYPE_NOT_SUPPORT = 8
+	commandTcpConnect   = 1
+	commandTcpBind      = 2
+	commandUdpAssociate = 3
+
+	addressTypeIPv4   = 1
+	addressTypeDomain = 3
+	addressTypeIPv6   = 4
+
+	statusRequestGranted          = 0
+	statusGeneralFailure          = 1
+	statusConnectionNotAllowed    = 2
+	statusNetworkUnreachable      = 3
+	statusHostUnreachable         = 4
+	statusConnectionRefused       = 5
+	statusTtlExpired              = 6
+	statusCommandNotSupport       = 7
+	statusAddressTypeNotSupported = 8
 )
 
 var (
-	ErrInvalidProxyResponse = errors.New("invalid proxy response")
+	ErrAuthFailed             = errors.New("authentication failed")
+	ErrInvalidProxyResponse   = errors.New("invalid proxy response")
+	ErrNoAcceptableAuthMethod = errors.New("could not agree on an auth method with server")
+
+	statusErrors = map[byte]error{
+		statusGeneralFailure:          errors.New("general failure"),
+		statusConnectionNotAllowed:    errors.New("connection not allowed by ruleset"),
+		statusNetworkUnreachable:      errors.New("network unreachable"),
+		statusHostUnreachable:         errors.New("host unreachable"),
+		statusConnectionRefused:       errors.New("connection refused by destination host"),
+		statusTtlExpired:              errors.New("TTL expired"),
+		statusCommandNotSupport:       errors.New("command not supported / protocol error"),
+		statusAddressTypeNotSupported: errors.New("address type not supported"),
+	}
 )
 
 type Proxy struct {
-	Addr string
+	Addr     string
+	Username string
+	Password string
 }
 
-func (p *Proxy) Dial(inet, addr string) (net.Conn, error) {
+func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 	host, strPort, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -52,34 +83,80 @@ func (p *Proxy) Dial(inet, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	_, err = conn.Write([]byte{PROTOCOL_VERSION, 1, 0}) // version, num auth methods, auth methods (0=noauth)
+	buf := make([]byte, 16)
+
+	buf[0] = protocolVersion
+	if p.Username != "" {
+		buf = buf[:4]
+		buf[1] = 2 // num auth methods
+		buf[2] = authNone
+		buf[3] = authUsernamePassword
+	} else {
+		buf = buf[:3]
+		buf[1] = 1 // num auth methods
+		buf[2] = authNone
+	}
+
+	_, err = conn.Write(buf)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
-
-	buf := make([]byte, 1024)
 
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	if buf[0] != PROTOCOL_VERSION || buf[1] != 0 { // version, chosen auth method (0xff == no acceptable auth method)
+	if buf[0] != protocolVersion {
 		conn.Close()
 		return nil, ErrInvalidProxyResponse
 	}
+	err = nil
+	switch buf[1] {
+	default:
+		err = ErrInvalidProxyResponse
+	case authUnavailable:
+		err = ErrNoAcceptableAuthMethod
+	case authGssApi:
+		err = ErrNoAcceptableAuthMethod
+	case authUsernamePassword:
+		buf = buf[:3+len(p.Username)+len(p.Password)]
+		buf[0] = 1 // version
+		buf[1] = byte(len(p.Username))
+		copy(buf[2:], p.Username)
+		buf[2+len(p.Username)] = byte(len(p.Password))
+		copy(buf[3+len(p.Username):], p.Password)
+		if _, err = conn.Write(buf); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		if _, err = io.ReadFull(conn, buf[:2]); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		if buf[0] != 1 { // version
+			err = ErrInvalidProxyResponse
+		} else if buf[1] != 0 { // 0 = succes, else auth failed
+			err = ErrAuthFailed
+		}
+	case authNone:
+		// Do nothing
+	}
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
 
 	buf = buf[:7+len(host)]
-	buf[0] = PROTOCOL_VERSION
-	buf[1] = COMMAND_TCP_CONNECT
+	buf[0] = protocolVersion
+	buf[1] = commandTcpConnect
 	buf[2] = 0 // reserved
-	buf[3] = ADDRESS_TYPE_DOMAIN
+	buf[3] = addressTypeDomain
 	buf[4] = byte(len(host))
 	copy(buf[5:], host)
 	buf[5+len(host)] = byte(port >> 8)
 	buf[6+len(host)] = byte(port & 0xff)
-	_, err = conn.Write(buf)
-	if err != nil {
+	if _, err := conn.Write(buf); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -89,35 +166,39 @@ func (p *Proxy) Dial(inet, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	if buf[0] != PROTOCOL_VERSION {
+	if buf[0] != protocolVersion {
 		conn.Close()
 		return nil, ErrInvalidProxyResponse
 	}
 
-	if buf[1] != STATUS_REQUEST_GRANTED {
+	if buf[1] != statusRequestGranted {
 		conn.Close()
-		return nil, ErrInvalidProxyResponse
+		err := statusErrors[buf[1]]
+		if err == nil {
+			err = ErrInvalidProxyResponse
+		}
+		return nil, err
 	}
 
-	paddr := &proxiedAddr{net: inet}
+	paddr := &proxiedAddr{net: network}
 
 	switch buf[3] {
 	default:
 		conn.Close()
 		return nil, ErrInvalidProxyResponse
-	case ADDRESS_TYPE_IPV4:
+	case addressTypeIPv4:
 		if _, err := io.ReadFull(conn, buf[:4]); err != nil {
 			conn.Close()
 			return nil, err
 		}
 		paddr.host = net.IP(buf).String()
-	case ADDRESS_TYPE_IPV6:
+	case addressTypeIPv6:
 		if _, err := io.ReadFull(conn, buf[:16]); err != nil {
 			conn.Close()
 			return nil, err
 		}
 		paddr.host = net.IP(buf).String()
-	case ADDRESS_TYPE_DOMAIN:
+	case addressTypeDomain:
 		if _, err := io.ReadFull(conn, buf[:1]); err != nil {
 			conn.Close()
 			return nil, err
@@ -135,7 +216,11 @@ func (p *Proxy) Dial(inet, addr string) (net.Conn, error) {
 		conn.Close()
 		return nil, err
 	}
-	paddr.port = int(buf[0]) << 8 | int(buf[1])
+	paddr.port = int(buf[0])<<8 | int(buf[1])
 
-	return &proxiedConn{conn:conn}, nil
+	return &proxiedConn{
+		conn:       conn,
+		boundAddr:  paddr,
+		remoteAddr: &proxiedAddr{network, host, port},
+	}, nil
 }
