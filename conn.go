@@ -11,8 +11,8 @@ import (
 
 type proxiedConn struct {
 	conn       net.Conn
-	remoteAddr *proxiedAddr
-	boundAddr  *proxiedAddr
+	remoteAddr *ProxiedAddr
+	boundAddr  *ProxiedAddr
 }
 
 func (c *proxiedConn) Read(b []byte) (int, error) {

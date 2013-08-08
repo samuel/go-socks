@@ -201,7 +201,7 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	paddr := &proxiedAddr{net: network}
+	paddr := &ProxiedAddr{Net: network}
 
 	switch buf[3] {
 	default:
@@ -212,13 +212,13 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 			conn.Close()
 			return nil, err
 		}
-		paddr.host = net.IP(buf).String()
+		paddr.Host = net.IP(buf).String()
 	case addressTypeIPv6:
 		if _, err := io.ReadFull(conn, buf[:16]); err != nil {
 			conn.Close()
 			return nil, err
 		}
-		paddr.host = net.IP(buf).String()
+		paddr.Host = net.IP(buf).String()
 	case addressTypeDomain:
 		if _, err := io.ReadFull(conn, buf[:1]); err != nil {
 			conn.Close()
@@ -229,18 +229,18 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 			conn.Close()
 			return nil, err
 		}
-		paddr.host = string(buf[:domainLen])
+		paddr.Host = string(buf[:domainLen])
 	}
 
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	paddr.port = int(buf[0])<<8 | int(buf[1])
+	paddr.Port = int(buf[0])<<8 | int(buf[1])
 
 	return &proxiedConn{
 		conn:       conn,
 		boundAddr:  paddr,
-		remoteAddr: &proxiedAddr{network, host, port},
+		remoteAddr: &ProxiedAddr{network, host, port},
 	}, nil
 }

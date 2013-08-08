@@ -6,16 +6,16 @@ package socks
 
 import "fmt"
 
-type proxiedAddr struct {
-	net  string
-	host string
-	port int
+type ProxiedAddr struct {
+	Net  string
+	Host string
+	Port int
 }
 
-func (a *proxiedAddr) Network() string {
-	return a.net
+func (a *ProxiedAddr) Network() string {
+	return a.Net
 }
 
-func (a *proxiedAddr) String() string {
-	return fmt.Sprintf("%s:%d", a.host, a.port)
+func (a *ProxiedAddr) String() string {
+	return fmt.Sprintf("%s:%d", a.Host, a.Port)
 }
