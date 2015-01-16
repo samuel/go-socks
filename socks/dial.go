@@ -13,9 +13,7 @@ Example http client over SOCKS5:
 
 	proxy := &socks.Proxy{"127.0.0.1:1080"}
 	tr := &http.Transport{
-		Dial: func(net, addr string) (net.Conn, error) {
-			return proxy.Dial(net, addr)
-		},
+		Dial: proxy.Dial,
 	}
 	client := &http.Client{Transport: tr}
 	resp, err := client.Get("https://example.com")
