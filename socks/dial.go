@@ -21,6 +21,8 @@ Example http client over SOCKS5:
 package socks
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -74,9 +76,10 @@ var (
 )
 
 type Proxy struct {
-	Addr     string
-	Username string
-	Password string
+	Addr         string
+	Username     string
+	Password     string
+	TorIsolation bool
 }
 
 func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
@@ -94,12 +97,25 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	buf := make([]byte, 32+len(host)+len(p.Username)+len(p.Password))
+	var user, pass string
+	if p.TorIsolation {
+		var b [16]byte
+		_, err := io.ReadFull(rand.Reader, b[:])
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		user = hex.EncodeToString(b[0:8])
+		pass = hex.EncodeToString(b[8:16])
+	} else {
+		user = p.Username
+		pass = p.Password
+	}
+	buf := make([]byte, 32+len(host)+len(user)+len(pass))
 
 	// Initial greeting
-
 	buf[0] = protocolVersion
-	if p.Username != "" {
+	if user != "" {
 		buf = buf[:4]
 		buf[1] = 2 // num auth methods
 		buf[2] = authNone
@@ -135,12 +151,12 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 	case authGssApi:
 		err = ErrNoAcceptableAuthMethod
 	case authUsernamePassword:
-		buf = buf[:3+len(p.Username)+len(p.Password)]
+		buf = buf[:3+len(user)+len(pass)]
 		buf[0] = 1 // version
-		buf[1] = byte(len(p.Username))
-		copy(buf[2:], p.Username)
-		buf[2+len(p.Username)] = byte(len(p.Password))
-		copy(buf[3+len(p.Username):], p.Password)
+		buf[1] = byte(len(user))
+		copy(buf[2:], user)
+		buf[2+len(user)] = byte(len(pass))
+		copy(buf[3+len(user):], pass)
 		if _, err = conn.Write(buf); err != nil {
 			conn.Close()
 			return nil, err
