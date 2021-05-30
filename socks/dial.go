@@ -21,10 +21,13 @@ Example http client over SOCKS5:
 package socks
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
 	"strconv"
+	"time"
 )
 
 const (
@@ -74,12 +77,21 @@ var (
 )
 
 type Proxy struct {
-	Addr     string
-	Username string
-	Password string
+	Addr         string
+	Username     string
+	Password     string
+	TorIsolation bool
 }
 
 func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
+	return p.dial(network, addr, 0)
+}
+
+func (p *Proxy) DialTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
+	return p.dial(network, addr, timeout)
+}
+
+func (p *Proxy) dial(network, addr string, timeout time.Duration) (net.Conn, error) {
 	host, strPort, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -89,17 +101,30 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	conn, err := net.Dial("tcp", p.Addr)
+	conn, err := net.DialTimeout("tcp", p.Addr, timeout)
 	if err != nil {
 		return nil, err
 	}
 
-	buf := make([]byte, 32+len(host)+len(p.Username)+len(p.Password))
+	var user, pass string
+	if p.TorIsolation {
+		var b [16]byte
+		_, err := io.ReadFull(rand.Reader, b[:])
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		user = hex.EncodeToString(b[0:8])
+		pass = hex.EncodeToString(b[8:16])
+	} else {
+		user = p.Username
+		pass = p.Password
+	}
+	buf := make([]byte, 32+len(host)+len(user)+len(pass))
 
 	// Initial greeting
-
 	buf[0] = protocolVersion
-	if p.Username != "" {
+	if user != "" {
 		buf = buf[:4]
 		buf[1] = 2 // num auth methods
 		buf[2] = authNone
@@ -135,12 +160,12 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 	case authGssApi:
 		err = ErrNoAcceptableAuthMethod
 	case authUsernamePassword:
-		buf = buf[:3+len(p.Username)+len(p.Password)]
+		buf = buf[:3+len(user)+len(pass)]
 		buf[0] = 1 // version
-		buf[1] = byte(len(p.Username))
-		copy(buf[2:], p.Username)
-		buf[2+len(p.Username)] = byte(len(p.Password))
-		copy(buf[3+len(p.Username):], p.Password)
+		buf[1] = byte(len(user))
+		copy(buf[2:], user)
+		buf[2+len(user)] = byte(len(pass))
+		copy(buf[3+len(user):], pass)
 		if _, err = conn.Write(buf); err != nil {
 			conn.Close()
 			return nil, err
@@ -199,7 +224,7 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	paddr := &proxiedAddr{net: network}
+	paddr := &ProxiedAddr{Net: network}
 
 	switch buf[3] {
 	default:
@@ -210,13 +235,13 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 			conn.Close()
 			return nil, err
 		}
-		paddr.host = net.IP(buf).String()
+		paddr.Host = net.IP(buf).String()
 	case addressTypeIPv6:
 		if _, err := io.ReadFull(conn, buf[:16]); err != nil {
 			conn.Close()
 			return nil, err
 		}
-		paddr.host = net.IP(buf).String()
+		paddr.Host = net.IP(buf).String()
 	case addressTypeDomain:
 		if _, err := io.ReadFull(conn, buf[:1]); err != nil {
 			conn.Close()
@@ -227,18 +252,18 @@ func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
 			conn.Close()
 			return nil, err
 		}
-		paddr.host = string(buf[:domainLen])
+		paddr.Host = string(buf[:domainLen])
 	}
 
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	paddr.port = int(buf[0])<<8 | int(buf[1])
+	paddr.Port = int(buf[0])<<8 | int(buf[1])
 
 	return &proxiedConn{
 		conn:       conn,
 		boundAddr:  paddr,
-		remoteAddr: &proxiedAddr{network, host, port},
+		remoteAddr: &ProxiedAddr{network, host, port},
 	}, nil
 }
